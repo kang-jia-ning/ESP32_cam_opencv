@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>紧急求助</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        #emergency {
+            background: linear-gradient(135deg, #ff6b6b 0%, #ee5a24 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+        }
+        .card {
+            border-radius: 15px;
+            border: none;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+            transition: transform 0.3s ease;
+        }
+        .card:hover {
+            transform: translateY(-5px);
+        }
+        #emergencyBtn {
+            border-radius: 50px;
+            padding: 15px 40px;
+            font-weight: 600;
+            letter-spacing: 1px;
+            transition: all 0.3s ease;
+            box-shadow: 0 5px 15px rgba(220, 20, 60, 0.4);
+        }
+        #emergencyBtn:hover {
+            transform: scale(1.05);
+            box-shadow: 0 8px 20px rgba(220, 20, 60, 0.6);
+        }
+        #emergencyResult {
+            border-radius: 10px;
+            background: #fff8f8;
+            transition: all 0.3s ease;
+        }
+        .display-3 {
+            text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.1);
+        }
+    </style>
+</head>
+<body>
+    <section id="emergency" class="py-5">
+            <div class="container">
+                <div class="row">
+                    <div class="col-lg-8 mx-auto">
+                        <h2 class="mb-4 text-center text-white">紧急求助</h2>
+                        <div class="card shadow-lg border-danger">
+                            <div class="card-body text-center">
+                                <i class="bi bi-exclamation-triangle-fill text-danger display-3 mb-4"></i>
+                                <h5 class="card-title mb-3">一键求助</h5>
+                                <p class="mb-4 text-muted">遇到紧急情况时，点击下方按钮向紧急联系人发送求助信息</p>
+                                <button id="emergencyBtn" class="btn btn-danger btn-lg mb-4">
+                                    <i class="bi bi-telephone-fill"></i> 紧急求助
+                                </button>
+                                <div id="emergencyResult" class="border rounded p-4" style="min-height: 150px;">
+                                    <p class="text-muted">请在紧急情况下点击求助按钮</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+            <!-- JavaScript -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.5/font/bootstrap-icons.js"></script>
+    <script src="{{ url_for('static', filename='js/main.js') }}"></script>
+</body>
+</html>

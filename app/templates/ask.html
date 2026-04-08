@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>智能问答</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        #ask {
+            background: linear-gradient(135deg, #43cea2 0%, #185a9d 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+        }
+        .card {
+            border-radius: 15px;
+            border: none;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.15);
+            transition: transform 0.3s ease;
+        }
+        .card:hover {
+            transform: translateY(-5px);
+        }
+        #askForm button {
+            border-radius: 50px;
+            padding: 12px 30px;
+            font-weight: 600;
+            letter-spacing: 1px;
+            transition: all 0.3s ease;
+        }
+        #askForm button:hover {
+            transform: scale(1.02);
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.1);
+        }
+        #askResult {
+            border-radius: 10px;
+            background: #f1f9ff;
+            transition: all 0.3s ease;
+        }
+        textarea {
+            border-radius: 10px;
+            border: 1px solid #dee2e6;
+            transition: border-color 0.3s ease;
+        }
+        textarea:focus {
+            border-color: #43cea2;
+            box-shadow: 0 0 0 0.25rem rgba(67, 206, 162, 0.25);
+        }
+    </style>
+</head>
+<body>
+    <section id="ask" class="py-5">
+            <div class="container">
+                <div class="row">
+                    <div class="col-lg-8 mx-auto">
+                        <h2 class="mb-4 text-center text-white">智能问答</h2>
+                        <div class="card shadow-lg">
+                            <div class="card-body">
+                                <h5 class="card-title mb-3">向AI提问</h5>
+                                <form id="askForm">
+                                    <div class="mb-3">
+                                        <label for="questionInput" class="form-label text-muted">您的问题</label>
+                                        <textarea class="form-control" id="questionInput" name="question" rows="3" placeholder="例如：附近有超市吗？" required></textarea>
+                                    </div>
+                                    <button type="submit" class="btn btn-info w-100">
+                                        <i class="bi bi-chat-dots"></i> 发送问题
+                                    </button>
+                                </form>
+                                <div id="askResult" class="mt-4 border rounded p-4" style="min-height: 150px;">
+                                    <p class="text-muted">请输入问题进行提问</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+            <!-- JavaScript -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.5/font/bootstrap-icons.js"></script>
+    <script src="{{ url_for('static', filename='js/main.js') }}"></script>
+</body>
+</html>
