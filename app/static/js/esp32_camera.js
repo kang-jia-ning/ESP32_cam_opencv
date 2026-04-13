@@ -21,7 +21,8 @@ class Esp32CameraManager {
             canvasElement: null,
             canvasContext: null,
             videoElement: null,
-            streamIntervalId: null
+            streamIntervalId: null,
+            captureIntervalId: null
         };
 
         this.callbacks = {
@@ -41,7 +42,7 @@ class Esp32CameraManager {
     init(options = {}) {
         this.canvasElement = options.canvasElement || document.getElementById('canvasElement');
         this.videoElement = options.videoElement || document.getElementById('videoElement');
-        
+
         if (this.canvasElement) {
             this.canvasContext = this.canvasElement.getContext('2d');
         }
@@ -70,7 +71,7 @@ class Esp32CameraManager {
      */
     async diagnose(url) {
         this.log('开始诊断ESP32摄像头: ' + url, 'info');
-        
+
         const results = {
             success: false,
             url: url,
@@ -104,7 +105,7 @@ class Esp32CameraManager {
         const host = urlObj.hostname;
         const protocol = urlObj.protocol;
         let port = urlObj.port || (protocol === 'https:' ? 443 : 80);
-        
+
         this.log(`主机: ${host}, 协议: ${protocol}, 端口: ${port}`, 'info');
 
         // 测试的端口列表
@@ -132,7 +133,7 @@ class Esp32CameraManager {
             for (const endpoint of endpoints) {
                 const testUrl = testBaseUrl + endpoint;
                 const testResult = await this.testEndpoint(testUrl);
-                
+
                 results.tests.push({
                     name: `${testUrl}`,
                     success: testResult.success,
@@ -225,7 +226,7 @@ class Esp32CameraManager {
 
         this.state.isConnecting = true;
         this.state.currentUrl = url;
-        
+
         this.updateStatus('connecting');
         if (this.callbacks.onConnecting) {
             this.callbacks.onConnecting(url);
@@ -265,43 +266,47 @@ class Esp32CameraManager {
     }
 
     /**
-     * 启动MJPEG流
+     * 启动MJPEG流 - 优化版：使用video标签实现真正的实时传输
      */
     startMJPEGStream(url) {
-        this.log('启动MJPEG流: ' + url, 'info');
+        this.log('启动MJPEG实时流: ' + url, 'info');
+
+        if (this.videoElement) {
+            this.videoElement.style.display = 'block';
+            this.videoElement.src = url;
+            this.videoElement.autoplay = true;
+            this.videoElement.playsInline = true;
+            this.videoElement.muted = true;
+
+            const video = this.videoElement;
+
+            video.onloadedmetadata = () => {
+                this.log('MJPEG流已加载，分辨率: ' + video.videoWidth + 'x' + video.videoHeight, 'success');
+
+                // 设置canvas尺寸用于检测
+                if (this.canvasElement) {
+                    this.canvasElement.width = video.videoWidth || 640;
+                    this.canvasElement.height = video.videoHeight || 480;
+                }
+            };
+
+            video.onplay = () => {
+                this.log('MJPEG流开始播放', 'success');
+                this.state.isPlaying = true;
+
+                // 开始定时捕获帧用于检测
+                this.startFrameCaptureForDetection();
+            };
+
+            video.onerror = () => {
+                this.log('MJPEG流加载失败，降级到轮询模式', 'error');
+                this.startImagePolling(url);
+            };
+        }
 
         if (this.canvasElement) {
-            this.canvasElement.style.display = 'block';
+            this.canvasElement.style.display = 'none';
         }
-        if (this.videoElement) {
-            this.videoElement.style.display = 'none';
-        }
-
-        this.state.imgElement = new Image();
-        this.state.imgElement.crossOrigin = 'anonymous';
-
-        this.state.imgElement.onload = () => {
-            this.drawFrame(this.state.imgElement);
-            if (this.callbacks.onFrameReceived) {
-                this.callbacks.onFrameReceived(this.state.imgElement);
-            }
-            
-            // 继续加载下一帧
-            if (this.state.isPlaying) {
-                setTimeout(() => {
-                    if (this.state.imgElement) {
-                        this.state.imgElement.src = url + '?' + new Date().getTime();
-                    }
-                }, 100);
-            }
-        };
-
-        this.state.imgElement.onerror = () => {
-            this.log('MJPEG流加载失败，降级到轮询模式', 'error');
-            this.startImagePolling(url);
-        };
-
-        this.state.imgElement.src = url + '?' + new Date().getTime();
     }
 
     /**
@@ -318,6 +323,42 @@ class Esp32CameraManager {
         }
 
         this.loadPollingFrame(url);
+    }
+
+    /**
+     * 启动帧捕获用于检测（从video标签捕获到canvas）
+     */
+    startFrameCaptureForDetection() {
+        if (this.state.captureIntervalId) {
+            clearInterval(this.state.captureIntervalId);
+        }
+
+        // 每秒捕获1帧用于检测（与DETECTION_INTERVAL保持一致）
+        this.state.captureIntervalId = setInterval(() => {
+            if (!this.state.isConnected || !this.state.isPlaying) return;
+
+            if (this.videoElement && this.canvasElement && this.canvasContext) {
+                try {
+                    const video = this.videoElement;
+                    if (video.readyState >= 2) { // HAVE_CURRENT_DATA
+                        this.canvasElement.width = video.videoWidth || 640;
+                        this.canvasElement.height = video.videoHeight || 480;
+
+                        this.canvasContext.drawImage(video, 0, 0,
+                            this.canvasElement.width,
+                            this.canvasElement.height);
+
+                        if (this.callbacks.onFrameReceived) {
+                            this.callbacks.onFrameReceived(this.canvasElement);
+                        }
+                    }
+                } catch (error) {
+                    this.log('帧捕获失败: ' + error.message, 'error');
+                }
+            }
+        }, 1000); // 1000ms = 1秒1帧，与检测频率保持一致
+
+        this.log('帧捕获已启动（1帧/秒）', 'info');
     }
 
     /**
@@ -390,6 +431,17 @@ class Esp32CameraManager {
         if (this.state.streamIntervalId) {
             clearInterval(this.state.streamIntervalId);
             this.state.streamIntervalId = null;
+        }
+
+        if (this.state.captureIntervalId) {
+            clearInterval(this.state.captureIntervalId);
+            this.state.captureIntervalId = null;
+        }
+
+        // 停止video播放
+        if (this.videoElement) {
+            this.videoElement.src = '';
+            this.videoElement.style.display = 'none';
         }
 
         // 清空canvas

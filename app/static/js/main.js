@@ -14,6 +14,459 @@ let isTestingDetectionRate = false;
 let currentLocation = null;
 let currentLocationMethod = null; // 存储定位方式：'gps' 或 'ip'
 
+// IP地址配置管理
+const IP_CONFIG_KEY = 'esp32_ip_history';
+const MAX_HISTORY_ITEMS = 10;
+
+function validateIpAddress(input) {
+    let ip = input.trim();
+    
+    if (!ip) {
+        return { isValid: false, error: 'IP地址不能为空', formattedIp: null };
+    }
+    
+    if (ip.length > 255) {
+        return { isValid: false, error: '输入过长，请检查', formattedIp: null };
+    }
+    
+    let hasProtocol = ip.startsWith('http://') || ip.startsWith('https://');
+    let cleanIp = ip;
+    
+    if (hasProtocol) {
+        try {
+            const urlObj = new URL(ip);
+            cleanIp = urlObj.hostname;
+        } catch (e) {
+            return { isValid: false, error: 'URL格式无效', formattedIp: null };
+        }
+    }
+    
+    const ipv4Pattern = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/;
+    const ipv6Pattern = /^([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}$|^::$/;
+    const hostnamePattern = /^[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?)*$/;
+    
+    let isValidFormat = false;
+    
+    if (ipv4Pattern.test(cleanIp)) {
+        const parts = cleanIp.split('.');
+        isValidFormat = parts.every(part => {
+            const num = parseInt(part, 10);
+            return num >= 0 && num <= 255 && part === String(num);
+        });
+        
+        if (!isValidFormat) {
+            return { isValid: false, error: 'IPv4地址格式无效（每个段必须在0-255之间）', formattedIp: null };
+        }
+    } else if (ipv6Pattern.test(cleanIp)) {
+        isValidFormat = true;
+    } else if (hostnamePattern.test(cleanIp) && cleanIp.length <= 253) {
+        isValidFormat = true;
+    } else {
+        return { 
+            isValid: false, 
+            error: '请输入有效的IP地址或域名（例如：192.168.1.100 或 esp32-camera.local）', 
+            formattedIp: null 
+        };
+    }
+    
+    let formattedIp = ip;
+    if (!hasProtocol) {
+        formattedIp = `http://${ip}/`;
+    } else if (!ip.endsWith('/')) {
+        formattedIp = `${ip}/`;
+    }
+    
+    return { isValid: true, error: null, formattedIp: formattedIp, cleanIp: cleanIp };
+}
+
+function getIpHistory() {
+    try {
+        const history = localStorage.getItem(IP_CONFIG_KEY);
+        return history ? JSON.parse(history) : [];
+    } catch (e) {
+        console.error('读取IP历史记录失败:', e);
+        return [];
+    }
+}
+
+function saveIpToHistory(ip) {
+    if (!ip || !ip.trim()) return;
+    
+    let history = getIpHistory();
+    
+    history = history.filter(item => item !== ip);
+    
+    history.unshift(ip);
+    
+    if (history.length > MAX_HISTORY_ITEMS) {
+        history = history.slice(0, MAX_HISTORY_ITEMS);
+    }
+    
+    try {
+        localStorage.setItem(IP_CONFIG_KEY, JSON.stringify(history));
+    } catch (e) {
+        console.error('保存IP历史记录失败:', e);
+    }
+}
+
+function clearIpHistory() {
+    try {
+        localStorage.removeItem(IP_CONFIG_KEY);
+        renderIpHistoryList();
+        showFeedback('info', '历史记录已清空');
+    } catch (e) {
+        console.error('清空IP历史记录失败:', e);
+    }
+}
+
+function renderIpHistoryList() {
+    const historyList = document.getElementById('ipHistoryList');
+    if (!historyList) return;
+    
+    const history = getIpHistory();
+    
+    if (history.length === 0) {
+        historyList.innerHTML = `
+            <li><a class="dropdown-item text-muted text-center small" href="#">
+                <i class="bi bi-clock"></i> 暂无历史记录
+            </a></li>
+        `;
+        return;
+    }
+    
+    historyList.innerHTML = history.map((ip, index) => `
+        <li>
+            <a class="dropdown-item" href="#" data-ip="${escapeHtml(ip)}" onclick="selectIpFromHistory('${escapeHtml(ip)}'); return false;">
+                <i class="bi ${index === 0 ? 'bi-clock-fill text-primary' : 'bi-clock'}"></i>
+                <span class="${index === 0 ? 'fw-bold' : ''}">${escapeHtml(ip)}</span>
+                ${index === 0 ? '<span class="badge bg-primary ms-2">最近</span>' : ''}
+            </a>
+        </li>
+    `).join('');
+}
+
+function selectIpFromHistory(ip) {
+    const input = document.getElementById('espCameraUrl');
+    if (input) {
+        input.value = ip;
+        espCameraUrl = ip;
+        updateCurrentUrlDisplay(ip);
+        validateAndShowFeedback(ip);
+        
+        const dropdownBtn = document.getElementById('historyDropdownBtn');
+        if (dropdownBtn) {
+            const dropdown = bootstrap.Dropdown.getInstance(dropdownBtn);
+            if (dropdown) {
+                dropdown.hide();
+            }
+        }
+    }
+}
+
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+function updateCurrentUrlDisplay(url) {
+    const displayEl = document.getElementById('currentUrlDisplay');
+    if (!displayEl) return;
+    
+    if (url) {
+        displayEl.textContent = url;
+    } else {
+        displayEl.textContent = espCameraUrl || '未配置';
+    }
+}
+
+// 更新ESP32下位机通信状态
+function updateEsp32CommStatus(status, message = '') {
+    const statusEl = document.getElementById('esp32CommStatus');
+    if (!statusEl) return;
+
+    statusEl.className = 'badge';
+    
+    switch (status) {
+        case 'success':
+            statusEl.classList.add('bg-success');
+            statusEl.textContent = '✓ 已发送';
+            if (message) {
+                statusEl.title = message;
+            }
+            // 3秒后恢复为"已连接"
+            setTimeout(() => {
+                if (currentCamera === 'esp32') {
+                    statusEl.className = 'badge bg-primary';
+                    statusEl.textContent = '已连接';
+                }
+            }, 3000);
+            break;
+        case 'error':
+            statusEl.classList.add('bg-danger');
+            statusEl.textContent = '✗ 失败';
+            statusEl.title = message || '发送失败';
+            break;
+        case 'sending':
+            statusEl.classList.add('bg-warning');
+            statusEl.textContent = '发送中...';
+            break;
+        case 'connected':
+            statusEl.classList.add('bg-primary');
+            statusEl.textContent = '已连接';
+            statusEl.title = '';
+            break;
+        default:
+            statusEl.classList.add('bg-secondary');
+            statusEl.textContent = '未连接';
+            statusEl.title = '';
+    }
+}
+
+function showValidationFeedback(message, type) {
+    const feedbackEl = document.getElementById('ipValidationFeedback');
+    if (!feedbackEl) return;
+    
+    if (!message) {
+        feedbackEl.innerHTML = '';
+        return;
+    }
+    
+    const iconClass = type === 'success' ? 'bi-check-circle-fill text-success' :
+                      type === 'error' ? 'bi-x-circle-fill text-danger' :
+                      type === 'warning' ? 'bi-exclamation-circle-fill text-warning' :
+                      'bi-info-circle-fill text-info';
+    
+    feedbackEl.innerHTML = `<i class="bi ${iconClass}"></i> ${message}`;
+}
+
+function showErrorAlert(message) {
+    const alertEl = document.getElementById('ipErrorAlert');
+    const messageEl = document.getElementById('ipErrorMessage');
+    const successEl = document.getElementById('ipSuccessAlert');
+    
+    if (alertEl && messageEl) {
+        messageEl.textContent = message;
+        alertEl.classList.remove('d-none');
+    }
+    
+    if (successEl) {
+        successEl.classList.add('d-none');
+    }
+}
+
+function showSuccessAlert(message) {
+    const alertEl = document.getElementById('ipSuccessAlert');
+    const messageEl = document.getElementById('ipSuccessMessage');
+    const errorEl = document.getElementById('ipErrorAlert');
+    
+    if (alertEl && messageEl) {
+        messageEl.textContent = message;
+        alertEl.classList.remove('d-none');
+    }
+    
+    if (errorEl) {
+        errorEl.classList.add('d-none');
+    }
+    
+    setTimeout(() => {
+        if (alertEl) {
+            alertEl.classList.add('d-none');
+        }
+    }, 3000);
+}
+
+function hideAllAlerts() {
+    const errorEl = document.getElementById('ipErrorAlert');
+    const successEl = document.getElementById('ipSuccessAlert');
+    
+    if (errorEl) errorEl.classList.add('d-none');
+    if (successEl) successEl.classList.add('d-none');
+}
+
+function updateConnectionBadge(status) {
+    const badge = document.getElementById('connectionStatusBadge');
+    if (!badge) return;
+    
+    badge.className = 'badge';
+    
+    switch (status) {
+        case 'configured':
+            badge.classList.add('bg-success');
+            badge.textContent = '已配置';
+            break;
+        case 'connecting':
+            badge.classList.add('bg-warning');
+            badge.textContent = '连接中...';
+            break;
+        case 'connected':
+            badge.classList.add('bg-primary');
+            badge.textContent = '已连接';
+            break;
+        case 'error':
+            badge.classList.add('bg-danger');
+            badge.textContent = '错误';
+            break;
+        default:
+            badge.classList.add('bg-secondary');
+            badge.textContent = '未配置';
+    }
+}
+
+function updateLastConnectedInfo(url) {
+    const infoEl = document.getElementById('lastConnectedInfo');
+    if (!infoEl) return;
+    
+    if (url) {
+        const now = new Date();
+        const timeStr = now.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+        infoEl.innerHTML = `<i class="bi bi-info-circle"></i> 上次配置：${timeStr} - ${escapeHtml(url)}`;
+    } else {
+        infoEl.innerHTML = `<i class="bi bi-info-circle"></i> 上次连接：未连接`;
+    }
+}
+
+function validateAndShowFeedback(inputValue) {
+    hideAllAlerts();
+    
+    if (!inputValue) {
+        showValidationFeedback('', '');
+        updateConnectionBadge('default');
+        return null;
+    }
+    
+    const validation = validateIpAddress(inputValue);
+    
+    if (validation.isValid) {
+        showValidationFeedback(`格式有效: ${validation.cleanIp}`, 'success');
+        updateConnectionBadge('configured');
+    } else {
+        showValidationFeedback(validation.error, 'error');
+        updateConnectionBadge('error');
+    }
+    
+    return validation;
+}
+
+async function applyIpConfiguration() {
+    const input = document.getElementById('espCameraUrl');
+    if (!input) return;
+    
+    const inputValue = input.value.trim();
+    hideAllAlerts();
+    
+    if (!inputValue) {
+        showErrorAlert('请输入ESP32摄像头的IP地址或域名');
+        input.focus();
+        return false;
+    }
+    
+    const validation = validateIpAddress(inputValue);
+    
+    if (!validation.isValid) {
+        showErrorAlert(validation.error);
+        showValidationFeedback(validation.error, 'error');
+        updateConnectionBadge('error');
+        input.focus();
+        input.select();
+        return false;
+    }
+    
+    const applyBtn = document.getElementById('applyIpConfigBtn');
+    if (applyBtn) {
+        applyBtn.disabled = true;
+        applyBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>应用中...';
+    }
+    
+    updateConnectionBadge('connecting');
+    showValidationFeedback('正在验证连接...', 'warning');
+    
+    await new Promise(resolve => setTimeout(resolve, 300));
+    
+    espCameraUrl = validation.formattedIp;
+    
+    saveIpToHistory(validation.formattedIp);
+    renderIpHistoryList();
+    
+    localStorage.setItem('esp32_last_url', validation.formattedIp);
+    
+    input.value = validation.formattedIp;
+    
+    updateCurrentUrlDisplay(validation.formattedIp);
+    updateConnectionBadge('configured');
+    updateLastConnectedInfo(validation.formattedIp);
+    
+    showValidationFeedback(`已应用: ${validation.cleanIp}`, 'success');
+    showSuccessAlert(`IP地址配置成功！摄像头地址设置为: ${validation.cleanIp}`);
+    
+    if (applyBtn) {
+        applyBtn.disabled = false;
+        applyBtn.innerHTML = '<i class="bi bi-check-lg"></i> 应用';
+    }
+    
+    addLogEntry(`IP地址已更新为: ${validation.formattedIp}`, 'success');
+    
+    return true;
+}
+
+function initIpConfigManager() {
+    const input = document.getElementById('espCameraUrl');
+    const applyBtn = document.getElementById('applyIpConfigBtn');
+    const clearHistoryBtn = document.getElementById('clearHistoryBtn');
+    
+    if (input) {
+        let debounceTimer;
+        input.addEventListener('input', function(e) {
+            clearTimeout(debounceTimer);
+            espCameraUrl = e.target.value;
+            updateCurrentUrlDisplay(e.target.value);
+            debounceTimer = setTimeout(() => {
+                validateAndShowFeedback(e.target.value);
+            }, 500);
+        });
+        
+        input.addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                applyIpConfiguration();
+            }
+        });
+        
+        input.addEventListener('focus', function() {
+            renderIpHistoryList();
+        });
+    }
+    
+    if (applyBtn) {
+        applyBtn.addEventListener('click', function() {
+            applyIpConfiguration();
+        });
+    }
+    
+    if (clearHistoryBtn) {
+        clearHistoryBtn.addEventListener('click', function() {
+            if (confirm('确定要清空所有IP历史记录吗？')) {
+                clearIpHistory();
+            }
+        });
+    }
+    
+    renderIpHistoryList();
+    
+    const savedUrl = localStorage.getItem('esp32_last_url');
+    if (savedUrl) {
+        if (input) {
+            input.value = savedUrl;
+        }
+        espCameraUrl = savedUrl;
+        updateCurrentUrlDisplay(savedUrl);
+        validateAndShowFeedback(savedUrl);
+    } else {
+        updateCurrentUrlDisplay(espCameraUrl);
+        validateAndShowFeedback(input ? input.value : '');
+    }
+}
+
 // 初始化ESP32摄像头管理器
 function initEsp32CameraManager() {
     if (typeof Esp32CameraManager !== 'undefined') {
@@ -283,6 +736,9 @@ document.addEventListener('DOMContentLoaded', function () {
     // 初始化ESP32摄像头管理器
     initEsp32CameraManager();
 
+    // 初始化IP配置管理器
+    initIpConfigManager();
+
     // 初始化ESP32特定按钮事件
     initEsp32ButtonEvents();
 });
@@ -342,12 +798,14 @@ function initEsp32ButtonEvents() {
         snapshotBtn.addEventListener('click', takeSnapshot);
     }
 
-    // ESP32 URL输入框 - 实时验证
+    // ESP32 URL输入框 - 实时验证（已移至initIpConfigManager）
+    // 保留此处的日志记录功能
     const espCameraUrlInput = document.getElementById('espCameraUrl');
     if (espCameraUrlInput) {
-        espCameraUrlInput.addEventListener('input', debounce(function (e) {
+        espCameraUrlInput.addEventListener('change', function (e) {
             espCameraUrl = e.target.value;
-        }, 500));
+            console.log('[ESP32] URL已更新:', espCameraUrl);
+        });
     }
 }
 
@@ -843,6 +1301,9 @@ async function startEspCamera() {
         if (resultContainer) {
             resultContainer.innerHTML = '<p class="text-muted">ESP32摄像头已连接，点击"开始检测"进行目标检测</p>';
         }
+        
+        // 更新ESP32通信状态为"已连接"
+        updateEsp32CommStatus('connected');
     }
 }
 
@@ -857,6 +1318,77 @@ function speakText(text) {
     if (!isSpeaking) {
         processSpeechQueue();
     }
+}
+
+// 发送语音播报文字到ESP32下位机
+async function sendAnnouncementToEsp32(announcementText) {
+    if (!announcementText || !espCameraUrl) {
+        console.log('[ESP32] 跳过发送：无文本或未配置URL');
+        return;
+    }
+
+    // 更新状态为"发送中"
+    updateEsp32CommStatus('sending');
+
+    // 构建发送到ESP32的API地址
+    // 假设ESP32有 /api/announce 或 /announce 端点接收文本
+    let espApiUrl = espCameraUrl;
+    
+    // 移除末尾的斜杠
+    if (espApiUrl.endsWith('/')) {
+        espApiUrl = espApiUrl.slice(0, -1);
+    }
+    
+    // 尝试多个可能的端点
+    const endpoints = [
+        '/api/announce',
+        '/announce',
+        '/text',
+        '/api/text',
+        '/display'
+    ];
+
+    for (const endpoint of endpoints) {
+        const fullUrl = espApiUrl + endpoint;
+        
+        try {
+            console.log(`[ESP32] 发送文本到: ${fullUrl}`);
+            console.log(`[ESP32] 文本内容: ${announcementText}`);
+
+            const response = await fetch(fullUrl, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    text: announcementText,
+                    timestamp: new Date().toISOString(),
+                    source: 'detection'
+                }),
+                mode: 'cors', // 允许跨域请求
+                timeout: 3000 // 3秒超时
+            });
+
+            if (response.ok) {
+                const result = await response.json();
+                console.log(`[ESP32] ✓ 发送成功:`, result);
+                updateEsp32CommStatus('success', `已发送: ${announcementText.substring(0, 30)}...`);
+                addLogEntry(`已将检测结果发送给ESP32: ${announcementText.substring(0, 50)}...`, 'success');
+                return true;
+            } else {
+                console.warn(`[ESP32] 端点返回错误: ${response.status} - ${endpoint}`);
+            }
+        } catch (error) {
+            console.warn(`[ESP32] 端点不可用: ${endpoint} - ${error.message}`);
+            // 继续尝试下一个端点
+        }
+    }
+
+    // 如果所有端点都失败，记录警告但不影响主流程
+    console.warn('[ESP32] 所有端点均不可用，无法发送文本到ESP32');
+    updateEsp32CommStatus('error', 'ESP32端点不可用');
+    addLogEntry('ESP32下位机不可用，未能发送检测结果（不影响本地功能）', 'warning');
+    return false;
 }
 
 // 处理语音播报队列
@@ -1240,6 +1772,13 @@ async function detectFrame(frame) {
 
             // 播放语音播报
             speakText(data.announcement);
+            
+            // 发送检测结果到ESP32下位机（异步，不阻塞主流程）
+            if (currentCamera === 'esp32') {
+                sendAnnouncementToEsp32(data.announcement).catch(error => {
+                    console.error('[ESP32] 发送失败:', error);
+                });
+            }
         } else {
             resultContainer.innerHTML = `<div class="alert alert-danger">检测失败：${data.message}</div>`;
         }

@@ -39,7 +39,7 @@ def test_esp32_camera(url):
 
 if __name__ == "__main__":
     # 测试默认地址
-    esp32_url = "http://192.168.4.127/"
+    esp32_url = "http://10.155.126.121/"
     test_esp32_camera(esp32_url)
     
     # 测试可能的其他地址格式
